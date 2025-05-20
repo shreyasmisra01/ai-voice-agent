@@ -6,6 +6,7 @@ const { OpenAI } = require('openai');
 const axios = require('axios');
 const { twiml: { VoiceResponse } } = require('twilio');
 const { v4: uuid } = require('uuid');
+const cors = require('cors')
 
 const config = require('./config')
 const middleware = require('./middleware');
@@ -13,9 +14,10 @@ const middleware = require('./middleware');
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+app.use(cors())
 
 // Make the audio files publicly available
-app.use('/audio', middleware.customHeaderMiddleware, express.static(path.join(__dirname, 'voice-output')));
+app.use('/audio', express.static(path.join(__dirname, 'voice-output')));
 
 // System prompt
 const systemPrompt = `
@@ -68,7 +70,7 @@ app.get("/voice-id", async (req, res) => {
   }
 })
 
-app.post('/voice', async (req, res) => {
+app.post('/voice', middleware.customHeaderMiddleware, async (req, res) => {
   const userSpeech = req.body.SpeechResult;
 
   if (!userSpeech) {
@@ -93,6 +95,10 @@ app.post('/voice', async (req, res) => {
 
     console.log("Text generated now sending to elevenlabs for generating audio.")
 
+    if (!cleanedAiText) {
+      return res.status(400).json({ error: 'AI text is required' });
+    }
+    
     const elevenAudioUrl = await textToSpeech(cleanedAiText);
 
     console.log("Audio generated now sending to twilio for playback.")
@@ -101,16 +107,18 @@ app.post('/voice', async (req, res) => {
 
     if (elevenAudioUrl.hasError) {
       console.log(elevenAudioUrl.error)
-      twilioResponse.say("Sorry, something went wrong. Please try again later.")
+      // twilioResponse.say("Sorry, something went wrong. Please try again later.")
+      res.status(500).json({ error: "Internal Server Error, can't generate audio. Please try later", message: null, url: null });
     } else {
-      twilioResponse.play(elevenAudioUrl.url);
+      // twilioResponse.play(elevenAudioUrl.url);
       console.log("Audio sent to twilio")
     }
 
     console.log("Response sent to twilio")
-    res.type('text/xml');
-    res.status(200).send(twilioResponse.toString());
+    // res.type('text/xml');
+    // res.status(200).send(twilioResponse.toString());
 
+    res.status(200).json({ message: cleanedAiText, url: elevenAudioUrl.url, error: null });
   } catch (error) {
     console.error("Error at /voice endpoint: ", error);
     res.status(500).json({ error: error.message });
